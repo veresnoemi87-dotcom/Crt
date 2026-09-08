@@ -1,9 +1,0 @@
-README.txt
-crt.py
-setup.py
-crt_cli.egg-info/PKG-INFO
-crt_cli.egg-info/SOURCES.txt
-crt_cli.egg-info/dependency_links.txt
-crt_cli.egg-info/entry_points.txt
-crt_cli.egg-info/requires.txt
-crt_cli.egg-info/top_level.txt

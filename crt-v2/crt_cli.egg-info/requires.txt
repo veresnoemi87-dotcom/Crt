@@ -1,3 +1,0 @@
-
-[graphics]
-pygame>=2.0
