@@ -1,0 +1,46 @@
+// A tiny "bouncing ball" game loop, exercising every graphics builtin.
+pygame_init(640, 480, "CRT Bounce Demo");
+
+let x = 320;
+let y = 240;
+let vx = 3;
+let vy = 2;
+let radius = 20;
+let running = true;
+
+while (running) {
+    if (pygame_poll_quit()) {
+        running = false;
+    }
+    if (pygame_key("escape")) {
+        running = false;
+    }
+
+    x = x + vx;
+    y = y + vy;
+
+    if (x < radius || x > 640 - radius) {
+        vx = -vx;
+    }
+    if (y < radius || y > 480 - radius) {
+        vy = -vy;
+    }
+
+    if (pygame_key("left")) {
+        x = x - 5;
+    }
+    if (pygame_key("right")) {
+        x = x + 5;
+    }
+
+    pygame_clear(10, 10, 30);
+    pygame_circle(x, y, radius, 255, 100, 50);
+    pygame_rect(10, 10, 100, 30, 0, 255, 0);
+    pygame_line(0, 0, 640, 480, 80, 80, 80);
+    pygame_text(10, 50, "CRT + pygame", 255, 255, 255);
+    pygame_flip();
+    pygame_tick(60);
+}
+
+pygame_quit();
+print("game loop exited cleanly");

@@ -1,0 +1,27 @@
+// =====================================================================
+// CRT CLASSES & IMPORTS DEMO
+// Run with:  crt build examples_classes_lib.ct -o examples_classes_lib.cvm
+//            crt run examples_classes_demo.ct
+//
+// `import` is resolved at compile time, so examples_classes_lib.cvm only
+// needs to exist when this file is compiled/run -- the .cvm produced by
+// `crt build examples_classes_demo.ct` is fully self-contained and does
+// not need the library file to travel with it afterwards.
+// =====================================================================
+
+import Neuralnetwork from "examples_classes_lib.cvm";
+import Mathy from "examples_classes_lib.cvm";
+
+print("== constructing an instance and calling methods on it ==");
+let net = Neuralnetwork(5, 2);
+print(net.train(1, 3));   // 5 + (1*3)  = 8
+print(net.train(2, 2));   // 8 + (2*2)  = 12
+
+print("== a second, independent instance keeps its own state ==");
+let net2 = Neuralnetwork(0, 0);
+print(net2.train(4, 4));  // 0 + (4*4)  = 16
+print(net.train(0, 0));   // unaffected: still 12
+
+print("== calling an imported class's methods directly (no instance) ==");
+print(Mathy.add(3, 4));   // 7
+print(Mathy.mul(6, 7));   // 42

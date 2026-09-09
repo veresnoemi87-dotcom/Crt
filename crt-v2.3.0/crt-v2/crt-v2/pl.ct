@@ -1,0 +1,886 @@
+// ============================================================
+// 2D PLATFORMER -- 26 LEVELS
+//   A / D or LEFT/RIGHT   - move
+//   SPACE / UP            - jump
+//   R                     - restart current level
+//   ESC                   - quit
+//
+//   Block types:
+//     wall    (white)   - solid ground/wall
+//     spike   (red)     - kills you, respawn at level start
+//     win     (green)   - flag, finishes the level
+//     moving  (orange)  - platform that slides back and forth, carries you
+//     bounce  (cyan)    - spring pad, launches you upward hard
+//     coin    (yellow)  - collectible, adds to score, no gameplay effect
+// ============================================================
+
+let W = 1000;
+let H = 600;
+pygame_init(W, H, "CRT Platformer 2D");
+
+// ---------- physics constants (pixels, seconds) ----------
+let GRAVITY = 1800.0;
+let MOVE_SPEED = 320.0;
+let JUMP_SPEED = 620.0;
+let BOUNCE_SPEED = 980.0;
+let PLAYER_W = 28.0;
+let PLAYER_H = 40.0;
+let MAX_FALL = 1400.0;
+
+// ---------- block constructors ----------
+// every block: {x, y, w, h, type, color} in world pixel coords
+// (x,y) is TOP-LEFT corner, matching pygame_rect's convention
+fn mkBlock(x, y, w, h, type, color) {
+    return { x: x, y: y, w: w, h: h, type: type, color: color };
+}
+fn wall(x, y, w, h)   { return mkBlock(x, y, w, h, "wall",   [235, 235, 235]); }
+fn spike(x, y, w, h)  { return mkBlock(x, y, w, h, "spike",  [220, 40, 40]);   }
+fn win(x, y, w, h)    { return mkBlock(x, y, w, h, "win",    [40, 220, 90]);   }
+fn bounce(x, y, w, h) { return mkBlock(x, y, w, h, "bounce", [40, 210, 220]);  }
+fn coin(x, y, w, h)   { return mkBlock(x, y, w, h, "coin",   [235, 210, 40]);  }
+fn moving(x, y, w, h, axis, range, speed) {
+    return {
+        x: x, y: y, w: w, h: h, type: "moving", color: [230, 150, 30],
+        homeX: x, homeY: y, axis: axis, range: range, speed: speed,
+        phase: 0.0, prevX: x, prevY: y
+    };
+}
+
+// ---------- reusable layout helpers ----------
+// ground strip of solid wall blocks, one wide block from x0 to x1 at y
+fn groundRow(x0, x1, y, thickness) {
+    return [wall(x0, y, x1 - x0, thickness)];
+}
+// a floating platform
+fn platform(x, y, w) {
+    return [wall(x, y, w, 24.0)];
+}
+// a row of evenly spaced spikes sitting on top of a y-surface
+fn spikeRow(x0, count, spacing, y) {
+    let out = [];
+    let i = 0;
+    while (i < count) {
+        out = out + [spike(x0 + i * spacing, y - 24.0, 26.0, 24.0)];
+        i = i + 1;
+    }
+    return out;
+}
+// a set of ascending stair platforms
+fn stairs(x0, y0, steps, stepW, stepH, dx, dy) {
+    let out = [];
+    let i = 0;
+    while (i < steps) {
+        out = out + [wall(x0 + i * dx, y0 - i * dy, stepW, stepH)];
+        i = i + 1;
+    }
+    return out;
+}
+
+let GROUND_Y = 520.0;
+
+// ---------- level list ----------
+// each entry: { blocks: [...], spawn: [x, y], name: "..." }
+let levels = [];
+
+// ---- helper to build a level record ----
+fn mkLevel(name, blocks, spawnX, spawnY) {
+    return { name: name, blocks: blocks, spawn: [spawnX, spawnY] };
+}
+
+// ===== LEVEL 1: tutorial - flat ground, one gap, one coin, flag =====
+levels = levels + [mkLevel("1: First Steps",
+    groundRow(0.0, 900.0, GROUND_Y, 80.0) +
+    [coin(400.0, GROUND_Y - 60.0, 20.0, 20.0)] +
+    [win(830.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 2: introduce a gap you must jump =====
+levels = levels + [mkLevel("2: Gap",
+    groundRow(0.0, 350.0, GROUND_Y, 80.0) +
+    groundRow(520.0, 950.0, GROUND_Y, 80.0) +
+    [coin(430.0, GROUND_Y - 120.0, 20.0, 20.0)] +
+    [win(880.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 3: introduce spikes on the ground =====
+levels = levels + [mkLevel("3: Spikes",
+    groundRow(0.0, 950.0, GROUND_Y, 80.0) +
+    spikeRow(400.0, 3, 40.0, GROUND_Y) +
+    [win(880.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 4: introduce moving platform over a pit =====
+levels = levels + [mkLevel("4: Moving Platform",
+    groundRow(0.0, 300.0, GROUND_Y, 80.0) +
+    groundRow(650.0, 950.0, GROUND_Y, 80.0) +
+    [moving(350.0, GROUND_Y - 20.0, 100.0, 20.0, "x", 130.0, 1.0)] +
+    [win(880.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 5: introduce bounce pad to reach a high ledge =====
+levels = levels + [mkLevel("5: Bounce",
+    groundRow(0.0, 400.0, GROUND_Y, 80.0) +
+    [bounce(320.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    platform(500.0, GROUND_Y - 260.0, 180.0) +
+    [coin(570.0, GROUND_Y - 300.0, 20.0, 20.0)] +
+    [win(600.0, GROUND_Y - 320.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 6: staircase up =====
+levels = levels + [mkLevel("6: Staircase",
+    groundRow(0.0, 250.0, GROUND_Y, 80.0) +
+    stairs(280.0, GROUND_Y, 6, 90.0, 24.0, 90.0, 60.0) +
+    [win(280.0 + 5.0 * 90.0, GROUND_Y - 5.0 * 60.0 - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 7: spikes + gap combo =====
+levels = levels + [mkLevel("7: Careful Steps",
+    groundRow(0.0, 300.0, GROUND_Y, 80.0) +
+    spikeRow(120.0, 2, 40.0, GROUND_Y) +
+    groundRow(460.0, 700.0, GROUND_Y, 80.0) +
+    spikeRow(500.0, 2, 40.0, GROUND_Y) +
+    groundRow(830.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 8: two moving platforms in sequence =====
+levels = levels + [mkLevel("8: Double Ride",
+    groundRow(0.0, 250.0, GROUND_Y, 80.0) +
+    [moving(280.0, GROUND_Y - 20.0, 90.0, 20.0, "x", 90.0, 1.1)] +
+    groundRow(500.0, 560.0, GROUND_Y, 80.0) +
+    [moving(590.0, GROUND_Y - 20.0, 90.0, 20.0, "x", 90.0, 1.3)] +
+    groundRow(820.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 9: vertical moving platform =====
+levels = levels + [mkLevel("9: Elevator",
+    groundRow(0.0, 250.0, GROUND_Y, 80.0) +
+    [moving(280.0, GROUND_Y - 20.0, 100.0, 20.0, "y", 220.0, 0.8)] +
+    platform(500.0, GROUND_Y - 260.0, 200.0) +
+    [win(600.0, GROUND_Y - 320.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 10: precision spike gauntlet =====
+levels = levels + [mkLevel("10: Gauntlet",
+    groundRow(0.0, 980.0, GROUND_Y, 80.0) +
+    spikeRow(200.0, 4, 34.0, GROUND_Y) +
+    spikeRow(550.0, 4, 34.0, GROUND_Y) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 11: high staircase then bounce shortcut =====
+levels = levels + [mkLevel("11: Shortcut",
+    groundRow(0.0, 220.0, GROUND_Y, 80.0) +
+    [bounce(140.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    platform(300.0, GROUND_Y - 320.0, 160.0) +
+    [coin(360.0, GROUND_Y - 360.0, 20.0, 20.0)] +
+    [win(340.0, GROUND_Y - 380.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 12: narrow platforms over a long pit =====
+levels = levels + [mkLevel("12: Stepping Stones",
+    groundRow(0.0, 150.0, GROUND_Y, 80.0) +
+    platform(230.0, GROUND_Y - 20.0, 70.0) +
+    platform(370.0, GROUND_Y - 20.0, 70.0) +
+    platform(510.0, GROUND_Y - 20.0, 70.0) +
+    platform(650.0, GROUND_Y - 20.0, 70.0) +
+    groundRow(790.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 13: moving platform over spikes =====
+levels = levels + [mkLevel("13: Spike Ferry",
+    groundRow(0.0, 250.0, GROUND_Y, 80.0) +
+    spikeRow(280.0, 6, 34.0, GROUND_Y) +
+    [moving(280.0, GROUND_Y - 140.0, 90.0, 20.0, "x", 230.0, 0.9)] +
+    groundRow(700.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 14: tall vertical climb with coins =====
+levels = levels + [mkLevel("14: Climb",
+    groundRow(0.0, 200.0, GROUND_Y, 80.0) +
+    stairs(80.0, GROUND_Y, 8, 80.0, 22.0, 0.0, 70.0) +
+    [coin(110.0, GROUND_Y - 3.0 * 70.0 - 40.0, 20.0, 20.0)] +
+    [coin(110.0, GROUND_Y - 6.0 * 70.0 - 40.0, 20.0, 20.0)] +
+    [win(110.0, GROUND_Y - 7.0 * 70.0 - 80.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 15: bounce chain across a canyon =====
+levels = levels + [mkLevel("15: Bounce Chain",
+    groundRow(0.0, 180.0, GROUND_Y, 80.0) +
+    [bounce(110.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    platform(260.0, GROUND_Y - 180.0, 70.0) +
+    [bounce(280.0, GROUND_Y - 200.0, 40.0, 20.0)] +
+    platform(430.0, GROUND_Y - 340.0, 70.0) +
+    [bounce(450.0, GROUND_Y - 360.0, 40.0, 20.0)] +
+    platform(600.0, GROUND_Y - 480.0, 200.0) +
+    [win(680.0, GROUND_Y - 540.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 16: mixed hazard corridor =====
+levels = levels + [mkLevel("16: Corridor",
+    groundRow(0.0, 300.0, GROUND_Y, 80.0) +
+    spikeRow(150.0, 2, 34.0, GROUND_Y) +
+    [moving(330.0, GROUND_Y - 20.0, 80.0, 20.0, "x", 100.0, 1.4)] +
+    groundRow(560.0, 650.0, GROUND_Y, 80.0) +
+    spikeRow(580.0, 1, 34.0, GROUND_Y) +
+    [moving(690.0, GROUND_Y - 20.0, 80.0, 20.0, "x", 90.0, 1.6)] +
+    groundRow(900.0, 980.0, GROUND_Y, 80.0) +
+    [win(920.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 17: two-tier level, choose your path =====
+levels = levels + [mkLevel("17: Two Paths",
+    groundRow(0.0, 950.0, GROUND_Y, 80.0) +
+    spikeRow(300.0, 6, 34.0, GROUND_Y) +
+    platform(260.0, GROUND_Y - 160.0, 460.0) +
+    [win(880.0, GROUND_Y - 60.0, 40.0, 60.0)] +
+    [coin(480.0, GROUND_Y - 200.0, 20.0, 20.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 18: vertical elevator shaft with spikes at bottom =====
+levels = levels + [mkLevel("18: Shaft",
+    groundRow(0.0, 220.0, GROUND_Y, 80.0) +
+    spikeRow(260.0, 4, 34.0, GROUND_Y) +
+    [moving(260.0, GROUND_Y - 20.0, 130.0, 20.0, "y", 260.0, 0.7)] +
+    groundRow(500.0, 980.0, GROUND_Y - 300.0, 24.0) +
+    [win(900.0, GROUND_Y - 360.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 19: fast-moving platform gauntlet =====
+levels = levels + [mkLevel("19: Speedway",
+    groundRow(0.0, 200.0, GROUND_Y, 80.0) +
+    spikeRow(230.0, 8, 34.0, GROUND_Y) +
+    [moving(230.0, GROUND_Y - 20.0, 90.0, 20.0, "x", 260.0, 2.0)] +
+    groundRow(820.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 20: bounce over a spike pit, precise landing =====
+levels = levels + [mkLevel("20: Leap of Faith",
+    groundRow(0.0, 260.0, GROUND_Y, 80.0) +
+    [bounce(180.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    spikeRow(300.0, 8, 34.0, GROUND_Y) +
+    groundRow(880.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 21: multi-level tower with mixed mechanics =====
+levels = levels + [mkLevel("21: Tower",
+    groundRow(0.0, 220.0, GROUND_Y, 80.0) +
+    [moving(250.0, GROUND_Y - 20.0, 90.0, 20.0, "x", 100.0, 1.2)] +
+    platform(470.0, GROUND_Y - 40.0, 140.0) +
+    spikeRow(490.0, 2, 40.0, GROUND_Y - 40.0) +
+    [bounce(650.0, GROUND_Y - 40.0 - 20.0, 60.0, 20.0)] +
+    platform(700.0, GROUND_Y - 260.0, 260.0) +
+    [coin(820.0, GROUND_Y - 300.0, 20.0, 20.0)] +
+    [win(900.0, GROUND_Y - 320.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 22: long descending platforms =====
+levels = levels + [mkLevel("22: Descent",
+    platform(20.0, 100.0, 160.0) +
+    platform(220.0, 200.0, 160.0) +
+    spikeRow(260.0, 1, 40.0, 200.0) +
+    platform(420.0, 300.0, 160.0) +
+    platform(620.0, 400.0, 160.0) +
+    spikeRow(660.0, 1, 40.0, 400.0) +
+    groundRow(0.0, 980.0, GROUND_Y, 80.0) +
+    [win(880.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    60.0, 60.0)];
+
+// ===== LEVEL 23: spike floor, all-platform crossing =====
+levels = levels + [mkLevel("23: No Ground",
+    platform(0.0, GROUND_Y - 60.0, 140.0) +
+    spikeRow(0.0, 24, 40.0, GROUND_Y + 80.0) +
+    platform(220.0, GROUND_Y - 120.0, 100.0) +
+    [moving(360.0, GROUND_Y - 160.0, 90.0, 20.0, "x", 100.0, 1.1)] +
+    platform(560.0, GROUND_Y - 220.0, 100.0) +
+    [bounce(580.0, GROUND_Y - 240.0, 60.0, 20.0)] +
+    platform(700.0, GROUND_Y - 380.0, 260.0) +
+    [win(880.0, GROUND_Y - 440.0, 40.0, 60.0)],
+    40.0, GROUND_Y - 60.0 - PLAYER_H)];
+
+// ===== LEVEL 24: dense hazard maze =====
+levels = levels + [mkLevel("24: Maze",
+    groundRow(0.0, 180.0, GROUND_Y, 80.0) +
+    spikeRow(180.0, 3, 34.0, GROUND_Y) +
+    platform(320.0, GROUND_Y - 100.0, 120.0) +
+    [moving(320.0, GROUND_Y - 220.0, 90.0, 20.0, "x", 90.0, 1.4)] +
+    spikeRow(460.0, 3, 34.0, GROUND_Y - 100.0) +
+    platform(600.0, GROUND_Y - 40.0, 100.0) +
+    [bounce(620.0, GROUND_Y - 60.0, 60.0, 20.0)] +
+    platform(760.0, GROUND_Y - 260.0, 200.0) +
+    [coin(850.0, GROUND_Y - 300.0, 20.0, 20.0)] +
+    [win(880.0, GROUND_Y - 320.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 25: everything combined, longer level =====
+levels = levels + [mkLevel("25: Trial",
+    groundRow(0.0, 200.0, GROUND_Y, 80.0) +
+    spikeRow(150.0, 1, 34.0, GROUND_Y) +
+    [moving(230.0, GROUND_Y - 20.0, 90.0, 20.0, "x", 110.0, 1.3)] +
+    groundRow(480.0, 560.0, GROUND_Y, 80.0) +
+    [bounce(500.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    platform(620.0, GROUND_Y - 220.0, 120.0) +
+    spikeRow(640.0, 2, 34.0, GROUND_Y - 220.0) +
+    [moving(760.0, GROUND_Y - 260.0, 90.0, 20.0, "y", 140.0, 1.0)] +
+    platform(880.0, GROUND_Y - 420.0, 100.0) +
+    [win(900.0, GROUND_Y - 480.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 26: multi-mechanic gauntlet =====
+levels = levels + [mkLevel("26: Gauntlet II",
+    groundRow(0.0, 160.0, GROUND_Y, 80.0) +
+    spikeRow(160.0, 5, 32.0, GROUND_Y) +
+    [moving(160.0, GROUND_Y - 160.0, 90.0, 20.0, "x", 220.0, 1.6)] +
+    groundRow(560.0, 640.0, GROUND_Y, 80.0) +
+    [bounce(580.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    spikeRow(700.0, 6, 32.0, GROUND_Y) +
+    platform(700.0, GROUND_Y - 280.0, 300.0) +
+    [moving(1000.0, GROUND_Y - 280.0, 80.0, 20.0, "y", 100.0, 1.2)] +
+    platform(1100.0, GROUND_Y - 400.0, 160.0) +
+    [coin(1150.0, GROUND_Y - 440.0, 20.0, 20.0)] +
+    [win(1160.0, GROUND_Y - 460.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 27: back-to-back elevators =====
+levels = levels + [mkLevel("27: Elevator Shafts",
+    groundRow(0.0, 200.0, GROUND_Y, 80.0) +
+    [moving(230.0, GROUND_Y - 20.0, 100.0, 20.0, "y", 200.0, 0.9)] +
+    platform(430.0, GROUND_Y - 240.0, 100.0) +
+    [moving(560.0, GROUND_Y - 240.0, 100.0, 20.0, "y", 180.0, 1.1)] +
+    platform(760.0, GROUND_Y - 440.0, 160.0) +
+    [coin(820.0, GROUND_Y - 480.0, 20.0, 20.0)] +
+    [win(840.0, GROUND_Y - 500.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 28: spike floor crossing with narrow platforms =====
+levels = levels + [mkLevel("28: Narrow Path",
+    groundRow(0.0, 140.0, GROUND_Y, 80.0) +
+    spikeRow(0.0, 22, 40.0, GROUND_Y + 90.0) +
+    platform(200.0, GROUND_Y - 20.0, 60.0) +
+    platform(330.0, GROUND_Y - 20.0, 60.0) +
+    platform(460.0, GROUND_Y - 20.0, 60.0) +
+    platform(590.0, GROUND_Y - 20.0, 60.0) +
+    platform(720.0, GROUND_Y - 20.0, 60.0) +
+    groundRow(850.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 29: fast horizontal shuttle over a wide pit =====
+levels = levels + [mkLevel("29: Shuttle Run",
+    groundRow(0.0, 180.0, GROUND_Y, 80.0) +
+    [moving(210.0, GROUND_Y - 20.0, 100.0, 20.0, "x", 340.0, 1.8)] +
+    groundRow(880.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 30: bounce-elevator combo =====
+levels = levels + [mkLevel("30: Up and Away",
+    groundRow(0.0, 220.0, GROUND_Y, 80.0) +
+    [bounce(140.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    platform(320.0, GROUND_Y - 200.0, 80.0) +
+    [moving(430.0, GROUND_Y - 200.0, 90.0, 20.0, "y", 240.0, 1.0)] +
+    platform(620.0, GROUND_Y - 460.0, 200.0) +
+    [coin(700.0, GROUND_Y - 500.0, 20.0, 20.0)] +
+    [win(720.0, GROUND_Y - 520.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 31: dense spike floor, all platforms =====
+levels = levels + [mkLevel("31: Floor is Lava",
+    platform(0.0, GROUND_Y - 40.0, 120.0) +
+    spikeRow(0.0, 26, 40.0, GROUND_Y + 80.0) +
+    platform(200.0, GROUND_Y - 100.0, 90.0) +
+    platform(370.0, GROUND_Y - 160.0, 90.0) +
+    platform(540.0, GROUND_Y - 100.0, 90.0) +
+    [moving(700.0, GROUND_Y - 140.0, 90.0, 20.0, "x", 100.0, 1.3)] +
+    platform(900.0, GROUND_Y - 200.0, 160.0) +
+    [win(960.0, GROUND_Y - 260.0, 40.0, 60.0)],
+    40.0, GROUND_Y - 40.0 - PLAYER_H)];
+
+// ===== LEVEL 32: three staggered elevators =====
+levels = levels + [mkLevel("32: Staggered Lifts",
+    groundRow(0.0, 180.0, GROUND_Y, 80.0) +
+    [moving(220.0, GROUND_Y - 20.0, 90.0, 20.0, "y", 160.0, 0.7)] +
+    [moving(420.0, GROUND_Y - 20.0, 90.0, 20.0, "y", 220.0, 1.0)] +
+    [moving(620.0, GROUND_Y - 20.0, 90.0, 20.0, "y", 160.0, 1.3)] +
+    platform(820.0, GROUND_Y - 300.0, 160.0) +
+    [win(880.0, GROUND_Y - 360.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 33: spike-lined staircase =====
+levels = levels + [mkLevel("33: Guarded Stairs",
+    groundRow(0.0, 200.0, GROUND_Y, 80.0) +
+    stairs(230.0, GROUND_Y, 6, 90.0, 24.0, 90.0, 55.0) +
+    spikeRow(320.0, 1, 90.0, GROUND_Y - 55.0) +
+    spikeRow(500.0, 1, 90.0, GROUND_Y - 3.0 * 55.0) +
+    [win(230.0 + 5.0 * 90.0, GROUND_Y - 5.0 * 55.0 - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 34: bounce timing gauntlet =====
+levels = levels + [mkLevel("34: Bounce Timing",
+    groundRow(0.0, 160.0, GROUND_Y, 80.0) +
+    [bounce(100.0, GROUND_Y - 20.0, 50.0, 20.0)] +
+    spikeRow(220.0, 10, 34.0, GROUND_Y) +
+    groundRow(900.0, 980.0, GROUND_Y, 80.0) +
+    [win(920.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 35: zigzag moving platforms =====
+levels = levels + [mkLevel("35: Zigzag",
+    groundRow(0.0, 150.0, GROUND_Y, 80.0) +
+    [moving(180.0, GROUND_Y - 40.0, 90.0, 20.0, "x", 80.0, 1.2)] +
+    [moving(400.0, GROUND_Y - 160.0, 90.0, 20.0, "x", 80.0, 1.2)] +
+    [moving(620.0, GROUND_Y - 280.0, 90.0, 20.0, "x", 80.0, 1.2)] +
+    platform(840.0, GROUND_Y - 400.0, 160.0) +
+    [win(900.0, GROUND_Y - 460.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 36: long spike corridor with coin risk =====
+levels = levels + [mkLevel("36: Risky Coins",
+    groundRow(0.0, 980.0, GROUND_Y, 80.0) +
+    spikeRow(150.0, 4, 34.0, GROUND_Y) +
+    [coin(280.0, GROUND_Y - 90.0, 20.0, 20.0)] +
+    spikeRow(450.0, 4, 34.0, GROUND_Y) +
+    [coin(580.0, GROUND_Y - 90.0, 20.0, 20.0)] +
+    spikeRow(750.0, 4, 34.0, GROUND_Y) +
+    [win(920.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 37: vertical elevator descent =====
+levels = levels + [mkLevel("37: Descending Lift",
+    platform(0.0, 60.0, 160.0) +
+    [moving(200.0, 60.0, 100.0, 20.0, "y", 380.0, 0.55)] +
+    groundRow(0.0, 980.0, GROUND_Y, 80.0) +
+    spikeRow(200.0, 6, 40.0, GROUND_Y) +
+    groundRow(700.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    60.0, 60.0 + 24.0 - PLAYER_H + 0.0)];
+
+// ===== LEVEL 38: double bounce over spike pit =====
+levels = levels + [mkLevel("38: Double Trouble",
+    groundRow(0.0, 160.0, GROUND_Y, 80.0) +
+    [bounce(100.0, GROUND_Y - 20.0, 50.0, 20.0)] +
+    spikeRow(220.0, 6, 34.0, GROUND_Y) +
+    platform(460.0, GROUND_Y - 20.0, 80.0) +
+    [bounce(480.0, GROUND_Y - 40.0, 50.0, 20.0)] +
+    spikeRow(600.0, 6, 34.0, GROUND_Y) +
+    groundRow(900.0, 980.0, GROUND_Y, 80.0) +
+    [win(920.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 39: fast elevator + moving platform relay =====
+levels = levels + [mkLevel("39: Relay",
+    groundRow(0.0, 180.0, GROUND_Y, 80.0) +
+    [moving(210.0, GROUND_Y - 20.0, 90.0, 20.0, "y", 200.0, 1.4)] +
+    platform(400.0, GROUND_Y - 220.0, 90.0) +
+    [moving(530.0, GROUND_Y - 220.0, 90.0, 20.0, "x", 150.0, 1.5)] +
+    platform(800.0, GROUND_Y - 220.0, 180.0) +
+    [win(870.0, GROUND_Y - 280.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 40: tight stepping stones over long pit =====
+levels = levels + [mkLevel("40: Long Crossing",
+    groundRow(0.0, 120.0, GROUND_Y, 80.0) +
+    platform(190.0, GROUND_Y - 20.0, 55.0) +
+    platform(310.0, GROUND_Y - 20.0, 55.0) +
+    platform(430.0, GROUND_Y - 20.0, 55.0) +
+    platform(550.0, GROUND_Y - 20.0, 55.0) +
+    platform(670.0, GROUND_Y - 20.0, 55.0) +
+    platform(790.0, GROUND_Y - 20.0, 55.0) +
+    groundRow(910.0, 990.0, GROUND_Y, 80.0) +
+    [win(930.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 41: spikes above and below, narrow gap =====
+levels = levels + [mkLevel("41: Squeeze",
+    groundRow(0.0, 250.0, GROUND_Y, 80.0) +
+    platform(280.0, GROUND_Y - 160.0, 500.0) +
+    spikeRow(320.0, 10, 40.0, GROUND_Y - 160.0) +
+    groundRow(300.0, 780.0, GROUND_Y, 80.0) +
+    spikeRow(340.0, 10, 40.0, GROUND_Y) +
+    groundRow(850.0, 980.0, GROUND_Y, 80.0) +
+    [win(900.0, GROUND_Y - 60.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 42: rising elevator chain through a shaft =====
+levels = levels + [mkLevel("42: Shaft Climb",
+    groundRow(0.0, 200.0, GROUND_Y, 80.0) +
+    spikeRow(230.0, 3, 34.0, GROUND_Y) +
+    [moving(230.0, GROUND_Y - 20.0, 110.0, 20.0, "y", 300.0, 0.65)] +
+    groundRow(460.0, 980.0, GROUND_Y - 340.0, 24.0) +
+    [win(900.0, GROUND_Y - 400.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 43: bounce-platform-bounce chain, high precision =====
+levels = levels + [mkLevel("43: Precision Bounce",
+    groundRow(0.0, 140.0, GROUND_Y, 80.0) +
+    [bounce(80.0, GROUND_Y - 20.0, 50.0, 20.0)] +
+    platform(220.0, GROUND_Y - 200.0, 60.0) +
+    [bounce(230.0, GROUND_Y - 220.0, 40.0, 20.0)] +
+    platform(380.0, GROUND_Y - 380.0, 60.0) +
+    [bounce(390.0, GROUND_Y - 400.0, 40.0, 20.0)] +
+    platform(540.0, GROUND_Y - 560.0, 60.0) +
+    [bounce(550.0, GROUND_Y - 580.0, 40.0, 20.0)] +
+    platform(700.0, GROUND_Y - 700.0, 260.0) +
+    [win(800.0, GROUND_Y - 760.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 44: mixed hazard maze with coins =====
+levels = levels + [mkLevel("44: Coin Maze",
+    groundRow(0.0, 160.0, GROUND_Y, 80.0) +
+    spikeRow(160.0, 2, 34.0, GROUND_Y) +
+    [moving(260.0, GROUND_Y - 20.0, 90.0, 20.0, "x", 90.0, 1.5)] +
+    [coin(280.0, GROUND_Y - 70.0, 20.0, 20.0)] +
+    groundRow(480.0, 560.0, GROUND_Y, 80.0) +
+    [bounce(500.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    platform(620.0, GROUND_Y - 220.0, 120.0) +
+    [coin(670.0, GROUND_Y - 260.0, 20.0, 20.0)] +
+    spikeRow(640.0, 2, 34.0, GROUND_Y - 220.0) +
+    [moving(780.0, GROUND_Y - 260.0, 90.0, 20.0, "y", 140.0, 1.1)] +
+    platform(900.0, GROUND_Y - 420.0, 100.0) +
+    [coin(940.0, GROUND_Y - 460.0, 20.0, 20.0)] +
+    [win(920.0, GROUND_Y - 480.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 45: fast shuttle + spike gauntlet combo =====
+levels = levels + [mkLevel("45: Gauntlet III",
+    groundRow(0.0, 140.0, GROUND_Y, 80.0) +
+    spikeRow(140.0, 6, 32.0, GROUND_Y) +
+    [moving(140.0, GROUND_Y - 20.0, 100.0, 20.0, "x", 260.0, 1.9)] +
+    groundRow(760.0, 840.0, GROUND_Y, 80.0) +
+    [bounce(780.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    spikeRow(900.0, 4, 32.0, GROUND_Y) +
+    platform(900.0, GROUND_Y - 240.0, 260.0) +
+    [win(1020.0, GROUND_Y - 300.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 46: triple elevator vertical maze =====
+levels = levels + [mkLevel("46: Vertical Maze",
+    groundRow(0.0, 180.0, GROUND_Y, 80.0) +
+    [moving(210.0, GROUND_Y - 20.0, 90.0, 20.0, "y", 180.0, 0.8)] +
+    platform(400.0, GROUND_Y - 180.0, 90.0) +
+    spikeRow(420.0, 1, 40.0, GROUND_Y - 180.0) +
+    [moving(560.0, GROUND_Y - 180.0, 90.0, 20.0, "y", 220.0, 1.0)] +
+    platform(760.0, GROUND_Y - 380.0, 90.0) +
+    spikeRow(780.0, 1, 40.0, GROUND_Y - 380.0) +
+    [moving(920.0, GROUND_Y - 380.0, 90.0, 20.0, "y", 180.0, 1.2)] +
+    platform(1120.0, GROUND_Y - 560.0, 160.0) +
+    [win(1180.0, GROUND_Y - 620.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 47: long precision stepping-stone spike crossing =====
+levels = levels + [mkLevel("47: Precision Crossing",
+    platform(0.0, GROUND_Y - 20.0, 120.0) +
+    spikeRow(0.0, 28, 40.0, GROUND_Y + 60.0) +
+    platform(180.0, GROUND_Y - 20.0, 50.0) +
+    platform(300.0, GROUND_Y - 80.0, 50.0) +
+    platform(420.0, GROUND_Y - 20.0, 50.0) +
+    platform(540.0, GROUND_Y - 140.0, 50.0) +
+    platform(660.0, GROUND_Y - 20.0, 50.0) +
+    [moving(760.0, GROUND_Y - 100.0, 90.0, 20.0, "x", 100.0, 1.4)] +
+    platform(980.0, GROUND_Y - 20.0, 160.0) +
+    [win(1040.0, GROUND_Y - 80.0, 40.0, 60.0)],
+    40.0, GROUND_Y - 20.0 - PLAYER_H)];
+
+// ===== LEVEL 48: bounce-elevator-spike combo tower =====
+levels = levels + [mkLevel("48: Combo Tower",
+    groundRow(0.0, 160.0, GROUND_Y, 80.0) +
+    [bounce(100.0, GROUND_Y - 20.0, 50.0, 20.0)] +
+    spikeRow(220.0, 4, 34.0, GROUND_Y) +
+    platform(380.0, GROUND_Y - 40.0, 100.0) +
+    [moving(500.0, GROUND_Y - 40.0, 90.0, 20.0, "y", 220.0, 1.0)] +
+    platform(650.0, GROUND_Y - 300.0, 90.0) +
+    spikeRow(670.0, 1, 40.0, GROUND_Y - 300.0) +
+    [bounce(760.0, GROUND_Y - 320.0, 50.0, 20.0)] +
+    platform(880.0, GROUND_Y - 520.0, 200.0) +
+    [coin(960.0, GROUND_Y - 560.0, 20.0, 20.0)] +
+    [win(980.0, GROUND_Y - 580.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 49: everything, long and unforgiving =====
+levels = levels + [mkLevel("49: Trial by Fire",
+    groundRow(0.0, 150.0, GROUND_Y, 80.0) +
+    spikeRow(150.0, 1, 34.0, GROUND_Y) +
+    [moving(230.0, GROUND_Y - 20.0, 90.0, 20.0, "x", 130.0, 1.5)] +
+    groundRow(500.0, 560.0, GROUND_Y, 80.0) +
+    [bounce(520.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    platform(650.0, GROUND_Y - 220.0, 100.0) +
+    spikeRow(670.0, 2, 34.0, GROUND_Y - 220.0) +
+    [moving(800.0, GROUND_Y - 260.0, 90.0, 20.0, "y", 160.0, 1.1)] +
+    platform(950.0, GROUND_Y - 440.0, 90.0) +
+    spikeRow(970.0, 1, 34.0, GROUND_Y - 440.0) +
+    [moving(1100.0, GROUND_Y - 440.0, 90.0, 20.0, "x", 140.0, 1.6)] +
+    platform(1320.0, GROUND_Y - 560.0, 180.0) +
+    [coin(1400.0, GROUND_Y - 600.0, 20.0, 20.0)] +
+    [win(1420.0, GROUND_Y - 620.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ===== LEVEL 50: the finale =====
+levels = levels + [mkLevel("50: Finale",
+    groundRow(0.0, 160.0, GROUND_Y, 80.0) +
+    spikeRow(160.0, 5, 32.0, GROUND_Y) +
+    [moving(160.0, GROUND_Y - 20.0, 100.0, 20.0, "x", 230.0, 1.7)] +
+    groundRow(600.0, 680.0, GROUND_Y, 80.0) +
+    [bounce(620.0, GROUND_Y - 20.0, 60.0, 20.0)] +
+    spikeRow(760.0, 5, 32.0, GROUND_Y) +
+    platform(760.0, GROUND_Y - 260.0, 200.0) +
+    spikeRow(800.0, 2, 34.0, GROUND_Y - 260.0) +
+    [moving(1000.0, GROUND_Y - 300.0, 90.0, 20.0, "y", 180.0, 1.0)] +
+    platform(1200.0, GROUND_Y - 480.0, 130.0) +
+    [bounce(1230.0, GROUND_Y - 500.0, 50.0, 20.0)] +
+    spikeRow(1400.0, 4, 32.0, GROUND_Y - 480.0) +
+    platform(1400.0, GROUND_Y - 680.0, 260.0) +
+    [moving(1700.0, GROUND_Y - 680.0, 90.0, 20.0, "x", 100.0, 1.4)] +
+    platform(1900.0, GROUND_Y - 780.0, 200.0) +
+    [coin(1970.0, GROUND_Y - 820.0, 20.0, 20.0)] +
+    [win(1990.0, GROUND_Y - 840.0, 40.0, 60.0)],
+    40.0, GROUND_Y - PLAYER_H)];
+
+// ---------- game state ----------
+let levelIndex = 0;
+let score = 0;
+let blocks = levels[levelIndex].blocks;
+let px = levels[levelIndex].spawn[0];
+let py = levels[levelIndex].spawn[1];
+let vx = 0.0;
+let vy = 0.0;
+let onGround = false;
+let standingOn = null;  // block ref currently supporting the player (for moving-platform carry)
+let camX = 0.0;
+let levelComplete = false;
+let completeTimer = 0.0;
+let allDone = false;
+let collectedCoins = [];  // list of block references already collected (avoid double count)
+
+fn loadLevel(idx) {
+    levelIndex = idx;
+    blocks = levels[levelIndex].blocks;
+    px = levels[levelIndex].spawn[0];
+    py = levels[levelIndex].spawn[1];
+    vx = 0.0;
+    vy = 0.0;
+    onGround = false;
+    standingOn = null;
+    levelComplete = false;
+    completeTimer = 0.0;
+    collectedCoins = [];
+    return null;
+}
+
+fn respawn() {
+    px = levels[levelIndex].spawn[0];
+    py = levels[levelIndex].spawn[1];
+    vx = 0.0;
+    vy = 0.0;
+    onGround = false;
+    standingOn = null;
+    return null;
+}
+
+// ---------- AABB overlap test ----------
+fn aabbOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+    if (ax + aw <= bx) { return false; }
+    if (ax >= bx + bw) { return false; }
+    if (ay + ah <= by) { return false; }
+    if (ay >= by + bh) { return false; }
+    return true;
+}
+
+// ---------- coin identity helper (compare by position since coins don't move) ----------
+fn coinAlreadyCollected(c) {
+    let i = 0;
+    while (i < len(collectedCoins)) {
+        let cc = collectedCoins[i];
+        if (cc[0] == c.x && cc[1] == c.y) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---------- main loop ----------
+let running = true;
+while (running) {
+    if (pygame_poll_quit()) { running = false; }
+    if (pygame_key("escape")) { running = false; }
+
+    let dtMs = pygame_tick(60);
+    let dt = dtMs / 1000.0;
+    if (dt > 0.033) { dt = 0.033; }
+
+    if (pygame_key("r")) { respawn(); }
+
+    // ---- update moving platforms (always animate, even mid-level-complete) ----
+    let mi = 0;
+    while (mi < len(blocks)) {
+        let b = blocks[mi];
+        if (b.type == "moving") {
+            b.prevX = b.x;
+            b.prevY = b.y;
+            b.phase = b.phase + b.speed * dt;
+            let offset = sin(b.phase) * b.range;
+            if (b.axis == "x") {
+                b.x = b.homeX + offset;
+            } else {
+                b.y = b.homeY + offset;
+            }
+        }
+        mi = mi + 1;
+    }
+
+    if (!allDone) {
+        if (!levelComplete) {
+            // ---- horizontal input ----
+            vx = 0.0;
+            if (pygame_key("a") || pygame_key("left"))  { vx = vx - MOVE_SPEED; }
+            if (pygame_key("d") || pygame_key("right")) { vx = vx + MOVE_SPEED; }
+
+            // find the platform we were standing on LAST frame (using the
+            // standingOn reference set by last frame's collision, not a
+            // fresh proximity guess) and apply its frame-delta directly to
+            // the player's position first, as if the ground itself shifted.
+            // This keeps the carry decoupled from this frame's gravity/jump
+            // math, which is what was causing the elevator teleport.
+            if (onGround && standingOn != null && standingOn.type == "moving") {
+                let dx = standingOn.x - standingOn.prevX;
+                let dy = standingOn.y - standingOn.prevY;
+                px = px + dx;
+                py = py + dy;
+            }
+
+            // ---- jump ----
+            if ((pygame_key("space") || pygame_key("up")) && onGround) {
+                vy = -JUMP_SPEED;
+                onGround = false;
+                standingOn = null;
+            }
+
+            // ---- gravity ----
+            vy = vy + GRAVITY * dt;
+            if (vy > MAX_FALL) { vy = MAX_FALL; }
+
+            // ---- move X, resolve collisions ----
+            let newX = px + vx * dt;
+            let xi = 0;
+            while (xi < len(blocks)) {
+                let b = blocks[xi];
+                if (b.type == "wall" || b.type == "moving") {
+                    if (aabbOverlap(newX, py, PLAYER_W, PLAYER_H, b.x, b.y, b.w, b.h)) {
+                        if (vx > 0.0) { newX = b.x - PLAYER_W; }
+                        if (vx < 0.0) { newX = b.x + b.w; }
+                    }
+                }
+                xi = xi + 1;
+            }
+            px = newX;
+
+            // ---- move Y, resolve collisions ----
+            let newY = py + vy * dt;
+            onGround = false;
+            standingOn = null;
+            let yi = 0;
+            while (yi < len(blocks)) {
+                let b = blocks[yi];
+                if (b.type == "wall" || b.type == "moving") {
+                    if (aabbOverlap(px, newY, PLAYER_W, PLAYER_H, b.x, b.y, b.w, b.h)) {
+                        if (vy > 0.0) {
+                            newY = b.y - PLAYER_H;
+                            onGround = true;
+                            standingOn = b;
+                            vy = 0.0;
+                        } else if (vy < 0.0) {
+                            newY = b.y + b.h;
+                            vy = 0.0;
+                        }
+                    }
+                }
+                yi = yi + 1;
+            }
+            py = newY;
+
+            // ---- hazards / coins / win ----
+            let hk = 0;
+            while (hk < len(blocks)) {
+                let b = blocks[hk];
+                if (aabbOverlap(px, py, PLAYER_W, PLAYER_H, b.x, b.y, b.w, b.h)) {
+                    if (b.type == "spike") {
+                        respawn();
+                    } else if (b.type == "bounce") {
+                        vy = -BOUNCE_SPEED;
+                        onGround = false;
+                    } else if (b.type == "win") {
+                        levelComplete = true;
+                        completeTimer = 0.0;
+                    } else if (b.type == "coin") {
+                        if (!coinAlreadyCollected(b)) {
+                            collectedCoins = collectedCoins + [[b.x, b.y]];
+                            score = score + 1;
+                        }
+                    }
+                }
+                hk = hk + 1;
+            }
+
+            // ---- fell off the world ----
+            if (py > H + 200.0) {
+                respawn();
+            }
+        } else {
+            completeTimer = completeTimer + dt;
+            if (completeTimer > 0.9) {
+                if (levelIndex + 1 < len(levels)) {
+                    loadLevel(levelIndex + 1);
+                } else {
+                    allDone = true;
+                }
+            }
+        }
+    }
+
+    // ---- camera follows player, clamped so it doesn't show negative space ----
+    camX = px - W / 2.0 + PLAYER_W / 2.0;
+    if (camX < 0.0) { camX = 0.0; }
+
+    // ---------- draw ----------
+    pygame_clear(18, 18, 28);
+
+    let di = 0;
+    while (di < len(blocks)) {
+        let b = blocks[di];
+        let sx = b.x - camX;
+        // simple cull: skip fully offscreen blocks
+        if (sx + b.w >= 0.0 && sx <= W) {
+            if (b.type == "coin") {
+                if (!coinAlreadyCollected(b)) {
+                    pygame_circle(sx + b.w / 2.0, b.y + b.h / 2.0, b.w / 2.0, b.color[0], b.color[1], b.color[2]);
+                }
+            } else {
+                pygame_rect(sx, b.y, b.w, b.h, b.color[0], b.color[1], b.color[2]);
+            }
+        }
+        di = di + 1;
+    }
+
+    if (!allDone) {
+        // player
+        pygame_rect(px - camX, py, PLAYER_W, PLAYER_H, 90, 170, 255);
+
+        pygame_text(10, 10, levels[levelIndex].name, 230, 230, 230);
+        pygame_text(10, 30, "Score: " + str(score), 200, 200, 200);
+        pygame_text(10, 50, "A/D move  SPACE jump  R restart  ESC quit", 150, 150, 150);
+
+        if (levelComplete) {
+            pygame_text(W / 2.0 - 70.0, H / 2.0 - 10.0, "LEVEL COMPLETE!", 60, 255, 120);
+        }
+    } else {
+        pygame_text(W / 2.0 - 90.0, H / 2.0 - 20.0, "ALL 26 LEVELS COMPLETE!", 60, 255, 120);
+        pygame_text(W / 2.0 - 60.0, H / 2.0 + 10.0, "Final score: " + str(score), 220, 220, 220);
+    }
+
+    pygame_flip();
+}
+
+pygame_quit();

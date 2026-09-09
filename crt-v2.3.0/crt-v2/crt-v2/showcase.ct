@@ -1,0 +1,266 @@
+// =====================================================================
+// CRT SHOWCASE - exercises every feature the compiler/VM supports.
+// Run with:  crt run showcase.ct
+// Every line is labeled so a wrong result is easy to spot.
+// =====================================================================
+
+/* ---------- literals & basic types ---------- */
+let n_int    = 42;
+let n_float  = 3.5;
+let s        = "hello";
+let s2       = 'single quotes too';
+let b_true   = true;
+let b_false  = false;
+let n_null   = null;
+
+print("== literals ==");
+print(n_int);
+print(n_float);
+print(s);
+print(s2);
+print(b_true);
+print(b_false);
+print(n_null);
+print(type(n_int));
+print(type(n_float));
+print(type(s));
+print(type(b_true));
+print(type(n_null));
+
+/* ---------- arithmetic ---------- */
+print("== arithmetic ==");
+print(2 + 3);          // 5
+print(10 - 4);          // 6
+print(6 * 7);            // 42
+print(9 / 2);            // 4.5 (true division)
+print(8 / 2);            // 4   (exact -> int)
+print(7 % 3);            // 1
+print(-5);                 // unary minus
+print(-(3 + 4));          // -7
+
+/* ---------- comparisons ---------- */
+print("== comparisons ==");
+print(3 == 3);
+print(3 != 4);
+print(3 < 4);
+print(4 > 3);
+print(3 <= 3);
+print(4 >= 4);
+
+/* ---------- logic ---------- */
+print("== logic ==");
+print(true && false);
+print(true || false);
+print(!true);
+print(not false);
+print(1 == 1 and 2 == 2);
+print(1 == 2 or 3 == 3);
+
+/* ---------- string concatenation ---------- */
+print("== strings ==");
+print("foo" + "bar");
+print("value: " + str(123));
+print(upper("shout"));
+print(lower("QUIET"));
+print(len("hello"));
+print(len("") == 0);
+
+/* ---------- type conversions ---------- */
+print("== conversions ==");
+print(int("123"));
+print(int(3.9));
+print(float(5));
+print(str(true));
+print(str(null));
+
+/* ---------- variables & assignment ---------- */
+print("== variables ==");
+let counter = 0;
+counter = counter + 1;
+counter = counter + 1;
+print(counter);          // 2
+
+/* ---------- lists ---------- */
+print("== lists ==");
+let list1 = [1, 2, 3, 4, 5];
+print(list1);
+print(list1[0]);
+print(list1[4]);
+list1[2] = 99;
+print(list1);
+print(len(list1));
+
+let empty_list = [];
+print(len(empty_list));
+
+/* ---------- objects ---------- */
+print("== objects ==");
+let obj = { name: "CRT", version: 2, active: true };
+print(obj);
+print(obj.name);
+print(obj.version);
+obj.version = 3;
+print(obj.version);
+
+let nested = { outer: { inner: { deep: "found me" } } };
+print(nested.outer.inner.deep);
+nested.outer.inner.deep = "changed";
+print(nested.outer.inner.deep);
+
+let list_of_objs = [{id: 1}, {id: 2}, {id: 3}];
+print(list_of_objs[1].id);
+list_of_objs[1].id = 200;
+print(list_of_objs[1].id);
+
+/* ---------- if / else if / else ---------- */
+print("== if-elseif-else ==");
+fn classify(x) {
+    if (x < 0) {
+        return "negative";
+    } else if (x == 0) {
+        return "zero";
+    } else if (x < 10) {
+        return "small";
+    } else {
+        return "big";
+    }
+}
+print(classify(-3));
+print(classify(0));
+print(classify(5));
+print(classify(500));
+
+/* ---------- while loop ---------- */
+print("== while ==");
+let i = 0;
+let sum_w = 0;
+while (i < 5) {
+    sum_w = sum_w + i;
+    i = i + 1;
+}
+print(sum_w);            // 0+1+2+3+4 = 10
+
+/* ---------- for loop, break, continue ---------- */
+print("== for / break / continue ==");
+let total = 0;
+for (let j = 0; j < 10; j = j + 1) {
+    if (j == 2) { continue; }   // skip 2
+    if (j == 6) { break; }      // stop before 6
+    total = total + j;
+}
+print(total);             // 0+1+3+4+5 = 13
+
+/* nested loops */
+let grid = 0;
+for (let r = 0; r < 3; r = r + 1) {
+    for (let c = 0; c < 3; c = c + 1) {
+        grid = grid + (r * 3 + c);
+    }
+}
+print(grid);              // sum 0..8 = 36
+
+/* ---------- functions: basics, multiple params, no args ---------- */
+print("== functions ==");
+fn add(a, b) {
+    return a + b;
+}
+print(add(3, 4));
+
+fn greet(name) {
+    return "Hello, " + name + "!";
+}
+print(greet("World"));
+
+fn no_args() {
+    return "no args needed";
+}
+print(no_args());
+
+fn five_args(a, b, c, d, e) {
+    return str(a) + str(b) + str(c) + str(d) + str(e);
+}
+print(five_args(1, 2, 3, 4, 5));
+
+/* ---------- recursion ---------- */
+print("== recursion ==");
+fn factorial(x) {
+    if (x <= 1) { return 1; }
+    return x * factorial(x - 1);
+}
+print(factorial(6));      // 720
+
+fn fib(x) {
+    if (x < 2) { return x; }
+    return fib(x - 1) + fib(x - 2);
+}
+print(fib(12));            // 144
+
+/* ---------- mutual recursion ---------- */
+print("== mutual recursion ==");
+fn is_even(x) {
+    if (x == 0) { return true; }
+    return is_odd(x - 1);
+}
+fn is_odd(x) {
+    if (x == 0) { return false; }
+    return is_even(x - 1);
+}
+print(is_even(10));
+print(is_odd(10));
+
+/* ---------- functions mutating globals ---------- */
+print("== globals via functions ==");
+let g_counter = 0;
+fn bump() {
+    g_counter = g_counter + 1;
+    return g_counter;
+}
+print(bump());
+print(bump());
+print(bump());
+print(g_counter);         // 3
+
+/* ---------- shadowing a param with a local let ---------- */
+print("== shadowing ==");
+fn shadow_test(x) {
+    let x = x + 100;
+    return x;
+}
+print(shadow_test(1));
+print(shadow_test(2));
+
+/* ---------- functions returning lists/objects ---------- */
+print("== functions returning structures ==");
+fn make_point(x, y) {
+    return { x: x, y: y };
+}
+let p = make_point(3, 4);
+print(p.x);
+print(p.y);
+
+fn make_range(n) {
+    let out = [];
+    for (let k = 0; k < n; k = k + 1) {
+        out = out + [k];
+    }
+    return out;
+}
+print(make_range(5));
+
+/* ---------- comments sanity ---------- */
+// this line is a comment and should not affect output
+/* this block
+   comment spans
+   multiple lines */
+print("comments ok");
+
+/* ---------- error-safe division check ---------- */
+print("== safe division pattern ==");
+fn safe_div(a, b) {
+    if (b == 0) { return null; }
+    return a / b;
+}
+print(safe_div(10, 0));
+print(safe_div(10, 4));
+
+print("== ALL CHECKS COMPLETE ==");

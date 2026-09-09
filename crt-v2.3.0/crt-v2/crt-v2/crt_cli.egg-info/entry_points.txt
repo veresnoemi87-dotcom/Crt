@@ -1,0 +1,2 @@
+[console_scripts]
+crt = crt:main

@@ -1,0 +1,30 @@
+// =====================================================================
+// A tiny "library" file: just a couple of classes, meant to be compiled
+// once and then reused from other scripts via `import ... from "...cvm";`
+//
+//     crt build examples_classes_lib.ct -o examples_classes_lib.cvm
+//
+// See examples_classes_demo.ct for the importing side.
+// =====================================================================
+
+class Neuralnetwork {
+    fn new(w1, i) {
+        self.w1 = w1;
+        self.i = i;
+    }
+    fn train(i, o) {
+        // toy update rule -- just enough to show state persisting
+        // across calls on the same instance
+        self.w1 = self.w1 + (i * o);
+        return self.w1;
+    }
+}
+
+class Mathy {
+    fn add(a, b) {
+        return a + b;
+    }
+    fn mul(a, b) {
+        return a * b;
+    }
+}
